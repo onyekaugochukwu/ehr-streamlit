@@ -444,7 +444,12 @@ def perform_multi_document_analysis(patient_id, patient_info, selected_docs, ana
             for i, doc in enumerate(selected_docs, 1):
                 combined_content += f"DOCUMENT {i}: {doc['metadata']['name']}\n"
                 combined_content += f"Type: {doc['type'].upper()}\n"
-                combined_content += f"Size: {doc['metadata']['size'] / 1024:.1f} KB\n"
+                # Handle file size properly (use file_size for images, size for others)
+                file_size = doc['metadata'].get('file_size', doc['metadata'].get('size', 0))
+                if isinstance(file_size, (int, float)):
+                    combined_content += f"Size: {file_size / 1024:.1f} KB\n"
+                else:
+                    combined_content += "Size: N/A\n"
 
                 if doc['type'] == "pdf" and 'pages' in doc['metadata']:
                     combined_content += f"Pages: {doc['metadata']['pages']}\n"
@@ -572,7 +577,7 @@ Provide a structured analysis that synthesizes information from all documents in
                     f"Multi-Document Analysis: {len(selected_docs)} documents",
                     f"AI Analysis - {analysis_type}",
                     f"Analyzed documents: {doc_names}\n\n{ai_analysis}",
-                    sum(doc['metadata']['size'] for doc in selected_docs)
+                    sum(doc['metadata'].get('file_size', doc['metadata'].get('size', 0)) for doc in selected_docs if isinstance(doc['metadata'].get('file_size', doc['metadata'].get('size', 0)), (int, float)))
                 )
 
                 # Log the analysis
@@ -604,7 +609,7 @@ def save_multiple_documents_to_record(patient_id, documents):
                 doc_summary = f"""
 Document Type: {doc['type'].upper()}
 Filename: {doc['metadata']['name']}
-File Size: {doc['metadata']['size'] / 1024:.1f} KB
+File Size: {doc['metadata'].get('file_size', doc['metadata'].get('size', 'N/A')) / 1024 if isinstance(doc['metadata'].get('file_size', doc['metadata'].get('size', 0)), (int, float)) else 'N/A'} KB
 Upload Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 Uploaded by: {st.session_state.current_user['username']}
 Session ID: {doc['session_id']}
@@ -617,9 +622,9 @@ Content Preview:
                 add_document(
                     patient_id,
                     doc['metadata']['name'],
-                    f"{doc['type']} - {doc['metadata']['size']/1024:.1f}KB",
+                    f"{doc['type']} - {doc['metadata'].get('file_size', doc['metadata'].get('size', 0))/1024:.1f}KB" if isinstance(doc['metadata'].get('file_size', doc['metadata'].get('size', 0)), (int, float)) else f"{doc['type']} - Unknown size",
                     doc_summary,
-                    doc['metadata']['size']
+                    doc['metadata'].get('file_size', doc['metadata'].get('size', 0)) if isinstance(doc['metadata'].get('file_size', doc['metadata'].get('size', 0)), (int, float)) else 0
                 )
 
                 success_count += 1
