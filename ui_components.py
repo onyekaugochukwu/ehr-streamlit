@@ -151,42 +151,35 @@ def patient_summary_card(patient_data: Dict, last_encounter: Optional[Dict] = No
     """Create a patient summary card with key information."""
     age = datetime.now().year - patient_data['dob'].year if patient_data['dob'] else 'N/A'
 
-    st.markdown(f"""
-    <div class="patient-card">
-        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 1rem;">
-            <div>
-                <h3 style="margin: 0; color: #2d3748; font-size: 1.25rem;">{patient_data['name']}</h3>
-                <p style="margin: 0.25rem 0; color: #718096;">Patient ID: {patient_data['id']}</p>
-            </div>
-            <div style="background: {get_gender_color(patient_data['gender'])}; color: white;
-                        padding: 0.5rem 1rem; border-radius: 20px; font-size: 0.875rem; font-weight: 600;">
+    # Use container to create a card-like appearance
+    with st.container():
+        # Header with name and gender
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.subheader(patient_data['name'])
+            st.caption(f"Patient ID: {patient_data['id']}")
+        with col2:
+            gender_color = get_gender_color(patient_data['gender'])
+            st.markdown(f"""
+            <div style="background: {gender_color}; color: white; padding: 0.5rem 1rem;
+                        border-radius: 20px; font-size: 0.875rem; font-weight: 600; text-align: center;">
                 {patient_data['gender']}
             </div>
-        </div>
+            """, unsafe_allow_html=True)
 
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-bottom: 1rem;">
-            <div>
-                <div style="font-size: 0.75rem; color: #718096; text-transform: uppercase;">Age</div>
-                <div style="font-weight: 600; color: #2d3748;">{age} years</div>
-            </div>
-            <div>
-                <div style="font-size: 0.75rem; color: #718096; text-transform: uppercase;">Contact</div>
-                <div style="font-weight: 600; color: #2d3748;">{patient_data['contact']}</div>
-            </div>
-            <div>
-                <div style="font-size: 0.75rem; color: #718096; text-transform: uppercase;">Last Visit</div>
-                <div style="font-weight: 600; color: #2d3748;">
-                    {last_encounter['date'].strftime('%Y-%m-%d') if last_encounter else 'No visits'}
-                </div>
-            </div>
-        </div>
+        # Patient details in columns
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Age", f"{age} years")
+        with col2:
+            st.metric("Contact", patient_data['contact'])
+        with col3:
+            last_visit = last_encounter['date'].strftime('%Y-%m-%d') if last_encounter else 'No visits'
+            st.metric("Last Visit", last_visit)
 
-        <div style="background: rgba(255,255,255,0.8); padding: 0.75rem; border-radius: 8px;">
-            <div style="font-size: 0.75rem; color: #718096; margin-bottom: 0.25rem;">Address</div>
-            <div style="color: #4a5568;">{patient_data['address']}</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+        # Address
+        with st.expander("📍 Address", expanded=False):
+            st.info(patient_data['address'])
 
 def get_gender_color(gender: str) -> str:
     """Get color based on gender."""

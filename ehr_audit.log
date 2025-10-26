@@ -7,3 +7,4 @@
 {"timestamp": "2025-10-26T00:09:44.249731", "user_id": "admin", "action": "ai_chat_interaction", "details": "AI chat with patient 11", "patient_id": 11, "ip_address": "unknown"}
 {"timestamp": "2025-10-26T00:20:23.258410", "user_id": "admin", "action": "login", "details": "User logged in successfully", "patient_id": null, "ip_address": "unknown"}
 {"timestamp": "2025-10-26T00:21:47.147819", "user_id": "admin", "action": "ai_chat_interaction", "details": "AI chat with patient 11", "patient_id": 11, "ip_address": "unknown"}
+{"timestamp": "2025-10-26T05:23:25.720526", "user_id": "admin", "action": "login", "details": "User logged in successfully", "patient_id": null, "ip_address": "unknown"}

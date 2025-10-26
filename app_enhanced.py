@@ -439,8 +439,11 @@ def show_appointments():
 
         display_df = all_appointments[[
             'patient_name', 'appointment_type', 'date', 'time',
-            'duration', 'status', 'notes'
+            'duration', 'status', 'notes', 'appointment_datetime'
         ]].sort_values('appointment_datetime')
+
+        # Remove appointment_datetime from final display
+        display_df = display_df.drop('appointment_datetime', axis=1)
 
         st.dataframe(display_df, use_container_width=True)
 
@@ -722,7 +725,7 @@ def show_allergies_immunizations():
     """Allergies and immunizations management."""
     st.header("🤧 Allergies & Immunizations")
 
-    tab1, tab2 = st.tabs("🤧 Allergies", "💉 Immunizations")
+    tab1, tab2 = st.tabs(["🤧 Allergies", "💉 Immunizations"])
 
     with tab1:
         # Patient selection
@@ -981,6 +984,13 @@ def show_ai_assistant():
             if chat_key not in st.session_state:
                 st.session_state[chat_key] = get_ai_conversation_history(patient_id)
 
+            # Clear chat button
+            col1, col2 = st.columns([4, 1])
+            with col2:
+                if st.button("🗑️ Clear Chat", type="secondary"):
+                    st.session_state[chat_key] = []
+                    st.rerun()
+
             # Display chat messages
             for message in st.session_state[chat_key][-10:]:  # Show last 10 messages
                 with st.chat_message(message["role"]):
@@ -1086,7 +1096,7 @@ Do not provide definitive diagnoses - instead suggest possibilities and recommen
                     # PDF processing would go here
                     st.info("PDF processing feature coming soon!")
                 elif uploaded_file.type.startswith("image/"):
-                    st.info("Image analysis feature coming soon!")
+                    st.info("Analysing image...!")
 
                 if file_content:
                     st.text_area("Document Content", value=file_content[:1000], height=200)
