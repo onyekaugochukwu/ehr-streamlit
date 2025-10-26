@@ -360,10 +360,10 @@ Note: These are suggestions for clinical consideration - use professional judgme
             try:
                 add_document(
                     patient_id,
-                    file_metadata['name'],
+                    None,  # No specific encounter_id for AI analysis
                     doc_type,
-                    ai_analysis,
-                    file_metadata['size']
+                    file_metadata['name'],  # Use filename as file_path
+                    ai_analysis  # Use AI analysis as text_content
                 )
 
                 # Log the analysis
@@ -407,10 +407,10 @@ Uploaded by: {st.session_state.current_user['username']}
         # Save to database
         add_document(
             patient_id,
-            file_metadata['name'],
-            f"{doc_type} - {file_metadata['size']/1024:.1f}KB",
-            doc_summary,
-            file_metadata['size']
+            None,  # No specific encounter_id for document summary
+            doc_type,
+            file_metadata['name'],  # Use filename as file_path
+            doc_summary  # Use document summary as text_content
         )
 
         st.success("✅ Document saved to patient record!")
@@ -572,12 +572,13 @@ Provide a structured analysis that synthesizes information from all documents in
             # Save analysis to patient record
             try:
                 doc_names = ", ".join([doc['metadata']['name'] for doc in selected_docs])
+                total_size = sum(doc['metadata'].get('file_size', doc['metadata'].get('size', 0)) for doc in selected_docs if isinstance(doc['metadata'].get('file_size', doc['metadata'].get('size', 0)), (int, float)))
                 add_document(
                     patient_id,
-                    f"Multi-Document Analysis: {len(selected_docs)} documents",
+                    None,  # No specific encounter_id for multi-document analysis
                     f"AI Analysis - {analysis_type}",
-                    f"Analyzed documents: {doc_names}\n\n{ai_analysis}",
-                    sum(doc['metadata'].get('file_size', doc['metadata'].get('size', 0)) for doc in selected_docs if isinstance(doc['metadata'].get('file_size', doc['metadata'].get('size', 0)), (int, float)))
+                    f"Multi-Document Analysis: {len(selected_docs)} documents",  # Use as file_path
+                    f"Analyzed documents: {doc_names}\n\n{ai_analysis}"  # Use as text_content
                 )
 
                 # Log the analysis
@@ -621,10 +622,10 @@ Content Preview:
                 # Save to database
                 add_document(
                     patient_id,
-                    doc['metadata']['name'],
-                    f"{doc['type']} - {doc['metadata'].get('file_size', doc['metadata'].get('size', 0))/1024:.1f}KB" if isinstance(doc['metadata'].get('file_size', doc['metadata'].get('size', 0)), (int, float)) else f"{doc['type']} - Unknown size",
-                    doc_summary,
-                    doc['metadata'].get('file_size', doc['metadata'].get('size', 0)) if isinstance(doc['metadata'].get('file_size', doc['metadata'].get('size', 0)), (int, float)) else 0
+                    None,  # No specific encounter_id for individual document
+                    doc['type'],
+                    doc['metadata']['name'],  # Use filename as file_path
+                    doc_summary  # Use document summary as text_content
                 )
 
                 success_count += 1
@@ -664,7 +665,7 @@ def display_saved_documents_for_chat(patient_id):
         st.info("📋 Select documents to include in the current chat session for AI context")
 
         # Filter and sort documents
-        saved_docs = saved_docs.sort_values('created_date', ascending=False)
+        saved_docs = saved_docs.sort_values('upload_time', ascending=False)
 
         # Document selection interface
         selected_docs = []
@@ -674,13 +675,13 @@ def display_saved_documents_for_chat(patient_id):
 
             with col1:
                 # Document info
-                doc_title = f"📄 {doc['document_name']}"
-                if doc['document_type']:
-                    doc_title += f" ({doc['document_type']})"
+                doc_title = f"📄 {doc['file_path']}"
+                if doc['type']:
+                    doc_title += f" ({doc['type']})"
 
                 # Add date info
-                if hasattr(doc, 'created_date') and pd.notna(doc['created_date']):
-                    doc_title += f" - {doc['created_date'].strftime('%Y-%m-%d')}"
+                if hasattr(doc, 'upload_time') and pd.notna(doc['upload_time']):
+                    doc_title += f" - {doc['upload_time'].strftime('%Y-%m-%d')}"
 
                 selected = st.checkbox(doc_title, key=f"saved_doc_{i}", help="Include in chat context")
 
@@ -688,11 +689,11 @@ def display_saved_documents_for_chat(patient_id):
                     selected_docs.append(doc)
 
                     # Show document preview in expander
-                    with st.expander(f"Preview: {doc['document_name']}", expanded=False):
-                        if doc['notes']:
-                            st.text_area("Content:", value=doc['notes'][:1000], height=150, disabled=True)
-                            if len(doc['notes']) > 1000:
-                                st.caption(f"Showing first 1000 of {len(doc['notes'])} characters")
+                    with st.expander(f"Preview: {doc['file_path']}", expanded=False):
+                        if doc['text_content']:
+                            st.text_area("Content:", value=doc['text_content'][:1000], height=150, disabled=True, key=f"saved_content_{i}")
+                            if len(doc['text_content']) > 1000:
+                                st.caption(f"Showing first 1000 of {len(doc['text_content'])} characters")
                         else:
                             st.info("No content preview available")
 
@@ -713,9 +714,9 @@ def display_saved_documents_for_chat(patient_id):
                     for doc in selected_docs:
                         st.session_state.chat_context_documents.append({
                             'id': doc['id'],
-                            'name': doc['document_name'],
-                            'type': doc['document_type'],
-                            'content': doc['notes'] or "",
+                            'name': doc['file_path'],
+                            'type': doc['type'],
+                            'content': doc['text_content'] or "",
                             'added_time': datetime.now()
                         })
 
@@ -1680,7 +1681,11 @@ Contact: {patient_info['contact']}
                         if st.session_state.get('chat_context_documents'):
                             document_context += "**SELECTED DOCUMENTS FOR CHAT CONTEXT:**\n"
                             for doc in st.session_state.chat_context_documents:
-                                document_context += f"- {doc['name']} ({doc['type']}): {doc['content'][:500]}...\n"
+                                # Include more content for meaningful analysis (up to 3000 characters)
+                                content_preview = doc['content']
+                                if len(content_preview) > 3000:
+                                    content_preview = content_preview[:3000] + "..."
+                                document_context += f"- {doc['name']} ({doc['type']}):\n{content_preview}\n\n"
                             document_context += "\n"
 
                         # Add recent patient documents
@@ -1689,7 +1694,11 @@ Contact: {patient_info['contact']}
                             recent_docs = patient_documents.tail(3)  # Last 3 documents
                             document_context += "**RECENT PATIENT DOCUMENTS:**\n"
                             for _, doc in recent_docs.iterrows():
-                                document_context += f"- {doc['document_name']} ({doc['document_type']}): {doc['notes'][:100]}...\n"
+                                # Include more content for recent documents (up to 1000 characters)
+                                content_preview = doc['text_content']
+                                if len(content_preview) > 1000:
+                                    content_preview = content_preview[:1000] + "..."
+                                document_context += f"- {doc['file_path']} ({doc['type']}):\n{content_preview}\n\n"
 
                         enhanced_system_prompt = f"""
 You are an expert clinical AI assistant with specialized knowledge in diagnostics, treatment planning, and clinical decision support. You are assisting with patient care for {patient_info['name']}.
@@ -1875,7 +1884,7 @@ Remember: You are assisting a qualified healthcare professional. Provide insight
                         if doc['type'] in ["text", "pdf"] and doc['content'].strip():
                             preview_length = 1000
                             preview_content = doc['content'][:preview_length]
-                            st.text_area(f"Preview:", value=preview_content, height=150, disabled=True)
+                            st.text_area(f"Preview:", value=preview_content, height=150, disabled=True, key=f"preview_{i}")
                             if len(doc['content']) > preview_length:
                                 st.caption(f"Showing first {preview_length} of {len(doc['content'])} characters")
                         elif doc['type'] == "image":
