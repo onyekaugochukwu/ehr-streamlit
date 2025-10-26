@@ -1,0 +1,9 @@
+{"timestamp": "2025-10-25T23:41:06.994677", "user_id": "admin", "action": "login", "details": "User logged in successfully", "patient_id": null, "ip_address": "unknown"}
+{"timestamp": "2025-10-25T23:54:58.324260", "user_id": "admin", "action": "login", "details": "User logged in successfully", "patient_id": null, "ip_address": "unknown"}
+{"timestamp": "2025-10-25T23:56:47.335512", "user_id": "admin", "action": "prescription_added", "details": "Added prescription for patient ID: 11", "patient_id": null, "ip_address": "unknown"}
+{"timestamp": "2025-10-25T23:57:16.011090", "user_id": "admin", "action": "prescription_added", "details": "Added prescription for patient ID: 11", "patient_id": null, "ip_address": "unknown"}
+{"timestamp": "2025-10-26T00:02:49.934154", "user_id": "admin", "action": "ai_chat_interaction", "details": "AI chat with patient 11", "patient_id": 11, "ip_address": "unknown"}
+{"timestamp": "2025-10-26T00:05:23.545878", "user_id": "admin", "action": "ai_chat_interaction", "details": "AI chat with patient 11", "patient_id": 11, "ip_address": "unknown"}
+{"timestamp": "2025-10-26T00:09:44.249731", "user_id": "admin", "action": "ai_chat_interaction", "details": "AI chat with patient 11", "patient_id": 11, "ip_address": "unknown"}
+{"timestamp": "2025-10-26T00:20:23.258410", "user_id": "admin", "action": "login", "details": "User logged in successfully", "patient_id": null, "ip_address": "unknown"}
+{"timestamp": "2025-10-26T00:21:47.147819", "user_id": "admin", "action": "ai_chat_interaction", "details": "AI chat with patient 11", "patient_id": 11, "ip_address": "unknown"}

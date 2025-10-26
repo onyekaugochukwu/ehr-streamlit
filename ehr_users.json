@@ -1,0 +1,12 @@
+{
+  "admin": {
+    "password": "e7ba93e8bf8753d44fe4dec5d573d99f:37fddf109dd4bd7d968f2814471685f67bde2d5bb8de37049a10187bcfce36c7",
+    "role": "admin",
+    "name": "System Administrator",
+    "email": "admin@ehr.local",
+    "created_at": "2025-10-25T23:41:06.988724",
+    "last_login": "2025-10-26T00:20:23.257552",
+    "failed_attempts": 0,
+    "locked_until": null
+  }
+}

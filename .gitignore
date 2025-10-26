@@ -1,0 +1,7 @@
+# Ignore dotenv files
+.env
+.env.*
+
+# Ignore the virtual environment directory created at `web/`
+web/
+

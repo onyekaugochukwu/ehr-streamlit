@@ -1,0 +1,7 @@
+streamlit
+openai
+duckdb
+python-dotenv
+pytesseract
+pillow
+PyPDF2
