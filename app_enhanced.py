@@ -9,6 +9,9 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import base64
 import mimetypes
+import PyPDF2
+from PIL import Image
+import io
 
 # Import custom modules
 from auth import (
@@ -101,6 +104,627 @@ def show_login_page():
                         st.success("Registration successful! Please login.")
                     else:
                         st.error(message)
+
+# Document Processing Functions
+def process_document(uploaded_file):
+    """Process different document types and extract content."""
+    file_content = ""
+    file_metadata = {
+        "name": uploaded_file.name,
+        "type": uploaded_file.type,
+        "size": uploaded_file.size
+    }
+
+    try:
+        if uploaded_file.type == "text/plain":
+            # Process TXT files
+            file_content = uploaded_file.read().decode("utf-8")
+            return file_content, file_metadata, "text"
+
+        elif uploaded_file.type == "application/pdf":
+            # Process PDF files
+            pdf_reader = PyPDF2.PdfReader(io.BytesIO(uploaded_file.read()))
+            file_content = ""
+
+            # Extract text from all pages
+            for page_num, page in enumerate(pdf_reader.pages, 1):
+                page_text = page.extract_text()
+                if page_text.strip():
+                    file_content += f"\n--- Page {page_num} ---\n{page_text}\n"
+
+            # Add PDF metadata
+            if pdf_reader.metadata:
+                file_metadata.update({
+                    "title": pdf_reader.metadata.get('/Title', 'Unknown'),
+                    "author": pdf_reader.metadata.get('/Author', 'Unknown'),
+                    "creator": pdf_reader.metadata.get('/Creator', 'Unknown'),
+                    "pages": len(pdf_reader.pages)
+                })
+
+            return file_content, file_metadata, "pdf"
+
+        elif uploaded_file.type.startswith("image/"):
+            # Process image files
+            image = Image.open(io.BytesIO(uploaded_file.read()))
+
+            # Basic image metadata
+            original_file_size = file_metadata['size']  # Preserve original file size
+            file_metadata.update({
+                "format": image.format,
+                "mode": image.mode,
+                "image_size": image.size,  # Don't overwrite file size
+                "width": image.width,
+                "height": image.height,
+                "file_size": original_file_size  # Keep original file size
+            })
+
+            # For medical images, we'll use OCR or base64 encoding for AI analysis
+            # Convert image to base64 for API submission
+            buffered = io.BytesIO()
+            image.save(buffered, format=image.format or "PNG")
+            img_str = base64.b64encode(buffered.getvalue()).decode()
+
+            # Extract some basic image info
+            file_content = f"""
+Medical Image Analysis Request
+Image Type: {uploaded_file.type}
+Image Format: {image.format}
+Image Size: {image.width}x{image.height} pixels
+Image Mode: {image.mode}
+File Size: {uploaded_file.size / 1024:.1f} KB
+
+Note: This is a medical image that requires visual analysis for diagnostic purposes.
+The image has been encoded for AI vision analysis.
+            """.strip()
+
+            return file_content, file_metadata, "image", img_str
+
+    except Exception as e:
+        raise Exception(f"Error processing {uploaded_file.type} file: {str(e)}")
+
+    return None, file_metadata, "unknown"
+
+def get_document_analysis_prompt(file_content, file_metadata, patient_info, doc_type):
+    """Generate enhanced analysis prompt based on document type and patient context."""
+
+    base_context = f"""
+CLINICAL CONTEXT:
+Patient: {patient_info['name']}, {datetime.now().year - patient_info['dob'].year} years old, {patient_info['gender']}
+Patient ID: {patient_info['id']}
+Contact: {patient_info['contact']}
+Address: {patient_info['address']}
+
+DOCUMENT INFORMATION:
+Type: {doc_type.upper()}
+Filename: {file_metadata['name']}
+File Size: {file_metadata['size'] / 1024:.1f} KB
+"""
+
+    if doc_type == "pdf" and 'pages' in file_metadata:
+        base_context += f"Pages: {file_metadata['pages']}\n"
+        if 'title' in file_metadata and file_metadata['title'] != 'Unknown':
+            base_context += f"Document Title: {file_metadata['title']}\n"
+
+    if doc_type == "image":
+        base_context += f"""
+Image Details:
+Format: {file_metadata.get('format', 'Unknown')}
+Dimensions: {file_metadata.get('width', 'Unknown')}x{file_metadata.get('height', 'Unknown')} pixels
+Color Mode: {file_metadata.get('mode', 'Unknown')}
+"""
+
+    if doc_type in ["text", "pdf"]:
+        base_context += f"""
+DOCUMENT CONTENT:
+{file_content[:8000]}  # Limit content to avoid token limits
+"""
+        if len(file_content) > 8000:
+            base_context += f"\n[Note: Document truncated - showing first 8000 characters of {len(file_content)} total characters]"
+
+    prompt = f"""
+You are an expert clinical AI assistant analyzing medical documents for patient care.
+
+{base_context}
+
+ANALYSIS TASKS:
+1. **Document Type Identification**: Identify what type of medical document this is (lab results, imaging report, clinical notes, prescription, etc.)
+
+2. **Key Findings Extraction**:
+   - Extract all numerical values, measurements, and test results
+   - Identify abnormal or critical values
+   - Note any trends or patterns
+
+3. **Clinical Significance Assessment**:
+   - Interpret the findings in clinical context
+   - Assess severity and urgency
+   - Identify potential red flags
+
+4. **Diagnostic Insights**:
+   - What conditions or diagnoses might these findings suggest?
+   - What differential diagnoses should be considered?
+   - Are there findings that require immediate attention?
+
+5. **Recommendations**:
+   - Suggested follow-up tests or consultations
+   - Treatment considerations based on findings
+   - Monitoring recommendations
+
+6. **Risk Assessment**:
+   - Identify high-risk findings
+   - Assess overall clinical risk level
+   - Note any contraindications or warnings
+
+Please provide a comprehensive, structured analysis that would be valuable for clinical decision-making. Use clear medical terminology but explain complex concepts. Highlight any critical findings that require urgent attention.
+"""
+
+    return prompt
+
+def perform_document_analysis(patient_id, patient_info, file_content, file_metadata, doc_type, img_base64, analysis_type):
+    """Perform AI analysis of uploaded document using OpenAI Responses API."""
+    if not client:
+        st.error("❌ OpenAI API not configured. Please set OPENAI_API_KEY environment variable.")
+        return
+
+    with st.spinner(f"🧠 AI performing {analysis_type.lower()}..."):
+        try:
+            # Generate tailored prompt based on analysis type
+            base_prompt = get_document_analysis_prompt(file_content, file_metadata, patient_info, doc_type)
+
+            if analysis_type == "Quick Summary":
+                analysis_prompt = f"""
+{base_prompt}
+
+Provide a concise, bulleted summary focusing on:
+1. Most important findings (top 3-5)
+2. Critical values requiring immediate attention
+3. Overall clinical impression
+4. Key recommendations
+
+Keep it brief but comprehensive for quick clinical review.
+                """
+            elif analysis_type == "Diagnostic Focus":
+                analysis_prompt = f"""
+{base_prompt}
+
+Focus specifically on DIAGNOSTIC INSIGHTS:
+1. Most likely diagnoses based on these findings
+2. Differential diagnoses to consider
+3. Key diagnostic criteria present or absent
+4. Recommended confirmatory tests
+5. Red flag symptoms or findings that require urgent evaluation
+
+Provide detailed reasoning for each diagnostic consideration.
+                """
+            elif analysis_type == "Risk Assessment":
+                analysis_prompt = f"""
+{base_prompt}
+
+Focus specifically on RISK ASSESSMENT:
+1. High-risk findings and their clinical significance
+2. Mortality/morbidity risk assessment
+3. Risk of complications or deterioration
+4. Factors that increase or decrease risk
+5. Recommended monitoring and follow-up based on risk level
+6. Emergency warning signs
+
+Quantify risk where possible (low/medium/high risk).
+                """
+            elif analysis_type == "Treatment Recommendations":
+                analysis_prompt = f"""
+{base_prompt}
+
+Focus specifically on TREATMENT RECOMMENDATIONS:
+1. Evidence-based treatment options for identified conditions
+2. Medication considerations (dosages, contraindications)
+3. Lifestyle interventions
+4. Referral recommendations
+5. Follow-up schedule and monitoring parameters
+6. Patient education points
+
+Note: These are suggestions for clinical consideration - use professional judgment.
+                """
+            else:  # Comprehensive Analysis
+                analysis_prompt = base_prompt
+
+            # Prepare messages for Responses API
+            messages = [
+                {
+                    "role": "system",
+                    "content": "You are an expert clinical AI assistant providing medical document analysis. Always prioritize patient safety and provide evidence-based insights."
+                },
+                {
+                    "role": "user",
+                    "content": analysis_prompt
+                }
+            ]
+
+            # Use OpenAI Responses API with chat history
+            response = client.responses.create(
+                model="gpt-5-nano-2025-08-07",
+                input=messages,
+                store=True,  # Enable stateful context
+                temperature=0.3
+            )
+
+            ai_analysis = response.output_text
+
+            # Display the analysis
+            st.markdown("### 📊 AI Analysis Results")
+            st.markdown("---")
+            st.markdown(ai_analysis)
+
+            # Add warning disclaimer
+            st.warning("⚠️ **Clinical Disclaimer**: This AI analysis is for informational purposes only and should not replace professional medical judgment. Always use clinical expertise and consider patient context when making medical decisions.")
+
+            # Save analysis to patient record
+            try:
+                add_document(
+                    patient_id,
+                    file_metadata['name'],
+                    doc_type,
+                    ai_analysis,
+                    file_metadata['size']
+                )
+
+                # Log the analysis
+                log_audit_event(
+                    st.session_state.current_user['username'],
+                    "document_analysis",
+                    f"AI analysis of {doc_type} document for patient {patient_id}",
+                    patient_id
+                )
+
+                st.success("✅ Analysis saved to patient record")
+
+            except Exception as save_error:
+                st.warning(f"Analysis completed but couldn't save to record: {save_error}")
+
+        except Exception as e:
+            st.error(f"❌ AI Analysis failed: {str(e)}")
+            st.info("Please check your OpenAI API configuration and try again.")
+
+def save_document_to_patient_record(patient_id, uploaded_file, file_metadata, doc_type):
+    """Save uploaded document to patient record."""
+    try:
+        # Read file content for storage
+        file_content = uploaded_file.read()
+
+        # Convert to base64 for storage if needed
+        if isinstance(file_content, bytes):
+            file_b64 = base64.b64encode(file_content).decode()
+        else:
+            file_b64 = str(file_content)
+
+        # Create document summary
+        doc_summary = f"""
+Document Type: {doc_type.upper()}
+Filename: {file_metadata['name']}
+File Size: {file_metadata['size'] / 1024:.1f} KB
+Upload Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Uploaded by: {st.session_state.current_user['username']}
+        """.strip()
+
+        # Save to database
+        add_document(
+            patient_id,
+            file_metadata['name'],
+            f"{doc_type} - {file_metadata['size']/1024:.1f}KB",
+            doc_summary,
+            file_metadata['size']
+        )
+
+        st.success("✅ Document saved to patient record!")
+        st.balloons()
+
+        # Log the action
+        log_audit_event(
+            st.session_state.current_user['username'],
+            "document_upload",
+            f"Uploaded {doc_type} document for patient {patient_id}",
+            patient_id
+        )
+
+    except Exception as e:
+        st.error(f"❌ Failed to save document: {str(e)}")
+
+def perform_multi_document_analysis(patient_id, patient_info, selected_docs, analysis_type):
+    """Perform AI analysis on multiple documents simultaneously."""
+    if not client:
+        st.error("❌ OpenAI API not configured. Please set OPENAI_API_KEY environment variable.")
+        return
+
+    with st.spinner(f"🧠 AI analyzing {len(selected_docs)} document(s)..."):
+        try:
+            # Combine all documents into a comprehensive analysis prompt
+            combined_content = f"MULTI-DOCUMENT ANALYSIS REQUEST\n{'='*60}\n\n"
+            combined_content += f"Patient: {patient_info['name']}, {datetime.now().year - patient_info['dob'].year} years old, {patient_info['gender']}\n"
+            combined_content += f"Analysis Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            combined_content += f"Number of Documents: {len(selected_docs)}\n\n"
+
+            for i, doc in enumerate(selected_docs, 1):
+                combined_content += f"DOCUMENT {i}: {doc['metadata']['name']}\n"
+                combined_content += f"Type: {doc['type'].upper()}\n"
+                combined_content += f"Size: {doc['metadata']['size'] / 1024:.1f} KB\n"
+
+                if doc['type'] == "pdf" and 'pages' in doc['metadata']:
+                    combined_content += f"Pages: {doc['metadata']['pages']}\n"
+
+                combined_content += f"Content:\n{doc['content'][:3000]}\n"  # Limit content per doc
+                if len(doc['content']) > 3000:
+                    combined_content += f"[Document truncated - showing first 3000 of {len(doc['content'])} characters]\n"
+                combined_content += "\n" + "-"*60 + "\n\n"
+
+            # Generate tailored analysis prompt
+            if analysis_type == "Quick Summary":
+                analysis_prompt = f"""
+{combined_content}
+
+Provide a comprehensive summary of all documents combined:
+
+1. **Key Findings Across All Documents**: List the most important findings from all documents
+2. **Cross-Document Patterns**: Identify correlations or patterns between different documents
+3. **Critical Values**: Highlight any abnormal or critical values found
+4. **Overall Clinical Picture**: Provide a consolidated clinical overview
+5. **Priority Recommendations**: List the most important follow-up actions
+
+Focus on insights that come from analyzing multiple documents together rather than individually.
+                """
+            elif analysis_type == "Diagnostic Focus":
+                analysis_prompt = f"""
+{combined_content}
+
+Provide a comprehensive diagnostic analysis considering all documents:
+
+1. **Primary Diagnostic Considerations**: Most likely diagnoses based on collective findings
+2. **Supporting Evidence**: Which findings support each diagnostic consideration from which documents
+3. **Cross-Referenced Findings**: How findings in one document support or contradict findings in others
+4. **Diagnostic Workup Plan**: Recommended tests to confirm or rule out diagnoses
+5. **Red Flag Analysis**: Any urgent findings requiring immediate attention across all documents
+6. **Specialist Referrals**: Which specialists should be consulted based on combined findings
+
+Emphasize how the combination of documents provides a more complete diagnostic picture.
+                """
+            elif analysis_type == "Risk Assessment":
+                analysis_prompt = f"""
+{combined_content}
+
+Provide a comprehensive risk assessment based on all documents:
+
+1. **High-Risk Findings**: Critical values or findings across all documents
+2. **Mortality/Morbidity Risk**: Overall risk assessment considering all factors
+3. **Complication Risk**: Risk of adverse outcomes based on combined findings
+4. **Medication Risks**: Any identified contraindications, interactions, or warnings
+5. **Lifestyle Risks**: Risk factors identified from the documents
+6. **Monitoring Requirements**: What needs to be monitored based on risk level
+7. **Emergency Indicators**: Symptoms or findings requiring immediate medical attention
+
+Quantify risk levels (low/medium/high) where possible.
+                """
+            elif analysis_type == "Treatment Recommendations":
+                analysis_prompt = f"""
+{combined_content}
+
+Provide comprehensive treatment recommendations based on all documents:
+
+1. **Evidence-Based Treatment Options**: Recommended treatments based on findings
+2. **Medication Recommendations**: Specific medications, dosages, and considerations
+3. **Lifestyle Interventions**: Recommended lifestyle changes based on findings
+4. **Therapeutic Priorities**: Which issues to address first based on severity
+5. **Follow-Up Schedule**: Recommended timeline for monitoring and reassessment
+6. **Referral Network**: Which specialists should be involved in care
+7. **Patient Education Topics**: Key education points for the patient
+
+Note all treatments should be considered in the context of the complete clinical picture from all documents.
+                """
+            else:  # Comprehensive Analysis
+                analysis_prompt = f"""
+{combined_content}
+
+Provide a comprehensive multi-document analysis:
+
+1. **Document Overview**: Summary of each document type and its purpose
+2. **Integrated Findings**: How findings across documents create a complete picture
+3. **Key Abnormalities**: All abnormal values and their clinical significance
+4. **Diagnostic Insights**: What conditions or diagnoses are suggested
+5. **Correlations**: How findings in different documents relate to each other
+6. **Risk Assessment**: Overall clinical risk based on all findings
+7. **Recommendations**: Consolidated recommendations for next steps
+8. **Urgent Findings**: Anything requiring immediate attention
+9. **Data Quality Assessment**: Any gaps or inconsistencies in the documentation
+
+Provide a structured analysis that synthesizes information from all documents into actionable clinical insights.
+                """
+
+            # Use OpenAI Responses API
+            messages = [
+                {
+                    "role": "system",
+                    "content": "You are an expert clinical AI assistant specializing in multi-document analysis. Synthesize information from multiple medical documents to provide comprehensive clinical insights. Always prioritize patient safety and consider how findings across documents create a complete clinical picture."
+                },
+                {
+                    "role": "user",
+                    "content": analysis_prompt
+                }
+            ]
+
+            response = client.responses.create(
+                model="gpt-5-nano-2025-08-07",
+                input=messages,
+                store=True,
+                temperature=0.3
+            )
+
+            ai_analysis = response.output_text
+
+            # Display the analysis
+            st.markdown("### 📊 Multi-Document AI Analysis Results")
+            st.markdown("---")
+            st.markdown(ai_analysis)
+
+            # Add warning disclaimer
+            st.warning("⚠️ **Clinical Disclaimer**: This AI analysis is for informational purposes only and should not replace professional medical judgment. Always use clinical expertise and consider patient context when making medical decisions.")
+
+            # Save analysis to patient record
+            try:
+                doc_names = ", ".join([doc['metadata']['name'] for doc in selected_docs])
+                add_document(
+                    patient_id,
+                    f"Multi-Document Analysis: {len(selected_docs)} documents",
+                    f"AI Analysis - {analysis_type}",
+                    f"Analyzed documents: {doc_names}\n\n{ai_analysis}",
+                    sum(doc['metadata']['size'] for doc in selected_docs)
+                )
+
+                # Log the analysis
+                log_audit_event(
+                    st.session_state.current_user['username'],
+                    "multi_document_analysis",
+                    f"AI analysis of {len(selected_docs)} documents for patient {patient_id}",
+                    patient_id
+                )
+
+                st.success("✅ Multi-document analysis saved to patient record")
+
+            except Exception as save_error:
+                st.warning(f"Analysis completed but couldn't save to record: {save_error}")
+
+        except Exception as e:
+            st.error(f"❌ Multi-document analysis failed: {str(e)}")
+            st.info("Please check your OpenAI API configuration and try again.")
+
+def save_multiple_documents_to_record(patient_id, documents):
+    """Save multiple documents to patient record."""
+    success_count = 0
+    error_count = 0
+
+    with st.spinner("💾 Saving documents to patient record..."):
+        for doc in documents:
+            try:
+                # Create document summary
+                doc_summary = f"""
+Document Type: {doc['type'].upper()}
+Filename: {doc['metadata']['name']}
+File Size: {doc['metadata']['size'] / 1024:.1f} KB
+Upload Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Uploaded by: {st.session_state.current_user['username']}
+Session ID: {doc['session_id']}
+
+Content Preview:
+{doc['content'][:500]}...
+                """.strip()
+
+                # Save to database
+                add_document(
+                    patient_id,
+                    doc['metadata']['name'],
+                    f"{doc['type']} - {doc['metadata']['size']/1024:.1f}KB",
+                    doc_summary,
+                    doc['metadata']['size']
+                )
+
+                success_count += 1
+
+            except Exception as e:
+                st.error(f"Failed to save {doc['metadata']['name']}: {str(e)}")
+                error_count += 1
+
+        # Display results
+        if success_count > 0:
+            st.success(f"✅ Successfully saved {success_count} document(s) to patient record!")
+            st.balloons()
+
+        if error_count > 0:
+            st.warning(f"⚠️ Failed to save {error_count} document(s)")
+
+        # Log the batch save action
+        log_audit_event(
+            st.session_state.current_user['username'],
+            "batch_document_upload",
+            f"Saved {success_count} documents for patient {patient_id}",
+            patient_id
+        )
+
+def display_saved_documents_for_chat(patient_id):
+    """Display saved documents and allow selection for chat reference."""
+    try:
+        st.markdown("### 📚 Saved Patient Documents")
+
+        # Get saved documents
+        saved_docs = get_documents(patient_id)
+
+        if saved_docs.empty:
+            st.info("No saved documents found for this patient.")
+            return
+
+        st.info("📋 Select documents to include in the current chat session for AI context")
+
+        # Filter and sort documents
+        saved_docs = saved_docs.sort_values('created_date', ascending=False)
+
+        # Document selection interface
+        selected_docs = []
+
+        for i, (_, doc) in enumerate(saved_docs.iterrows()):
+            col1, col2, col3 = st.columns([3, 1, 1])
+
+            with col1:
+                # Document info
+                doc_title = f"📄 {doc['document_name']}"
+                if doc['document_type']:
+                    doc_title += f" ({doc['document_type']})"
+
+                # Add date info
+                if hasattr(doc, 'created_date') and pd.notna(doc['created_date']):
+                    doc_title += f" - {doc['created_date'].strftime('%Y-%m-%d')}"
+
+                selected = st.checkbox(doc_title, key=f"saved_doc_{i}", help="Include in chat context")
+
+                if selected:
+                    selected_docs.append(doc)
+
+                    # Show document preview in expander
+                    with st.expander(f"Preview: {doc['document_name']}", expanded=False):
+                        if doc['notes']:
+                            st.text_area("Content:", value=doc['notes'][:1000], height=150, disabled=True)
+                            if len(doc['notes']) > 1000:
+                                st.caption(f"Showing first 1000 of {len(doc['notes'])} characters")
+                        else:
+                            st.info("No content preview available")
+
+        # Action buttons
+        if selected_docs:
+            st.markdown("---")
+            col1, col2 = st.columns([2, 1])
+
+            with col1:
+                st.success(f"Selected {len(selected_docs)} document(s) for chat context")
+
+            with col2:
+                if st.button("🔄 Add to Chat", type="primary", use_container_width=True):
+                    # Add selected documents to session state for chat context
+                    if 'chat_context_documents' not in st.session_state:
+                        st.session_state.chat_context_documents = []
+
+                    for doc in selected_docs:
+                        st.session_state.chat_context_documents.append({
+                            'id': doc['id'],
+                            'name': doc['document_name'],
+                            'type': doc['document_type'],
+                            'content': doc['notes'] or "",
+                            'added_time': datetime.now()
+                        })
+
+                    st.success(f"✅ Added {len(selected_docs)} documents to chat context!")
+                    st.session_state.show_saved_documents = False
+                    st.rerun()
+
+        # Close button
+        if st.button("❌ Close", use_container_width=True):
+            st.session_state.show_saved_documents = False
+            st.rerun()
+
+    except Exception as e:
+        st.error(f"❌ Error loading saved documents: {str(e)}")
 
 # Main application
 def main():
@@ -984,12 +1608,33 @@ def show_ai_assistant():
             if chat_key not in st.session_state:
                 st.session_state[chat_key] = get_ai_conversation_history(patient_id)
 
-            # Clear chat button
-            col1, col2 = st.columns([4, 1])
+            # Chat controls and document context
+            col1, col2, col3 = st.columns([3, 1, 1])
             with col2:
                 if st.button("🗑️ Clear Chat", type="secondary"):
                     st.session_state[chat_key] = []
                     st.rerun()
+            with col3:
+                if st.button("📚 Add Documents", type="secondary"):
+                    st.session_state.show_saved_documents = True
+                    st.rerun()
+
+            # Display active document context
+            if st.session_state.get('chat_context_documents'):
+                with st.expander("📄 Active Document Context", expanded=False):
+                    st.info(f"🔗 {len(st.session_state.chat_context_documents)} document(s) are included in chat context")
+                    for doc in st.session_state.chat_context_documents:
+                        col1, col2 = st.columns([4, 1])
+                        with col1:
+                            st.markdown(f"**{doc['name']}** ({doc['type']})")
+                            st.caption(f"Added: {doc['added_time'].strftime('%H:%M:%S')}")
+                        with col2:
+                            if st.button("🗑️", key=f"remove_doc_{doc['id']}", help="Remove from context"):
+                                st.session_state.chat_context_documents = [
+                                    d for d in st.session_state.chat_context_documents
+                                    if d['id'] != doc['id']
+                                ]
+                                st.rerun()
 
             # Display chat messages
             for message in st.session_state[chat_key][-10:]:  # Show last 10 messages
@@ -1023,44 +1668,89 @@ Contact: {patient_info['contact']}
                                 for _, enc in recent_encounters.iterrows()
                             ])
 
-                        system_prompt = f"""
-You are an expert clinical AI assistant helping healthcare professionals. You are discussing patient {patient_info['name']}.
+                        # Get patient documents for additional context
+                        document_context = ""
 
-PATIENT CONTEXT:
+                        # Add chat context documents first (highest priority)
+                        if st.session_state.get('chat_context_documents'):
+                            document_context += "**SELECTED DOCUMENTS FOR CHAT CONTEXT:**\n"
+                            for doc in st.session_state.chat_context_documents:
+                                document_context += f"- {doc['name']} ({doc['type']}): {doc['content'][:500]}...\n"
+                            document_context += "\n"
+
+                        # Add recent patient documents
+                        patient_documents = get_documents(patient_id)
+                        if not patient_documents.empty:
+                            recent_docs = patient_documents.tail(3)  # Last 3 documents
+                            document_context += "**RECENT PATIENT DOCUMENTS:**\n"
+                            for _, doc in recent_docs.iterrows():
+                                document_context += f"- {doc['document_name']} ({doc['document_type']}): {doc['notes'][:100]}...\n"
+
+                        enhanced_system_prompt = f"""
+You are an expert clinical AI assistant with specialized knowledge in diagnostics, treatment planning, and clinical decision support. You are assisting with patient care for {patient_info['name']}.
+
+COMPREHENSIVE PATIENT CONTEXT:
 {patient_context}
 
-RECENT CLINICAL HISTORY:
+RECENT CLINICAL ENCOUNTERS:
 {encounters_context}
 
-Provide helpful clinical insights, suggest potential approaches, and highlight important considerations.
-Always prioritize patient safety and recommend appropriate medical consultation.
-Do not provide definitive diagnoses - instead suggest possibilities and recommend appropriate evaluation.
+RECENT DOCUMENTS & TEST RESULTS:
+{document_context}
+
+CLINICAL GUIDELINES:
+1. **Diagnostic Excellence**: Consider differential diagnoses systematically, from common to rare conditions
+2. **Safety First**: Always identify red flag symptoms and conditions requiring urgent attention
+3. **Evidence-Based**: Provide clinical reasoning based on current medical guidelines and evidence
+4. **Context-Aware**: Consider patient age, gender, comorbidities, and medical history
+5. **Risk Assessment**: Evaluate potential risks, benefits, and contraindications for recommendations
+
+RESPONSE REQUIREMENTS:
+- Provide specific, actionable clinical insights rather than general advice
+- When discussing diagnoses, explain the reasoning and key diagnostic criteria
+- Highlight any abnormal values or critical findings that need attention
+- Suggest specific follow-up tests, referrals, or monitoring parameters
+- Consider medication interactions, allergies, and contraindications
+- Provide differential diagnoses with likelihood ranking when appropriate
+- Include evidence levels for recommendations where applicable
+
+SAFETY PROTOCOLS:
+- Always include "Red Flag Warning" section for symptoms requiring immediate care
+- Specify when emergency care is warranted
+- Recommend specialist consultation when appropriate
+- Consider drug-gene interactions and pharmacogenomics when relevant
+
+PROFESSIONAL RESPONSIBILITY:
+- Use clear, professional medical terminology while explaining complex concepts
+- Provide references to clinical guidelines when possible
+- Encourage shared decision-making with patients
+- Maintain patient-centered approach in all recommendations
+
+Remember: You are assisting a qualified healthcare professional. Provide insights that enhance their clinical judgment while respecting their ultimate authority in patient care decisions.
                         """
 
                         try:
-                            messages = [
-                                {"role": "system", "content": system_prompt},
-                                *[{"role": msg["role"], "content": msg["content"]}
-                                  for msg in st.session_state[chat_key][-5:]]  # Last 5 messages for context
+                            # Prepare full conversation history for context
+                            conversation_history = [
+                                {"role": "system", "content": enhanced_system_prompt}
                             ]
 
-                            # response = client.chat.completions.create(
-                            #     model="gpt-5-nano-2025-08-07",
-                            #     messages=messages,
-                            #     max_completion_tokens=500,
-                            #     temperature=1
-                            # )
+                            # Add recent messages for context (last 10 messages)
+                            for msg in st.session_state[chat_key][-10:]:
+                                conversation_history.append({
+                                    "role": msg["role"],
+                                    "content": msg["content"]
+                                })
 
-                            # ai_response = response.choices[0].message.content
-                            
+                            # Use OpenAI Responses API with full conversation context
                             response = client.responses.create(
                                 model="gpt-5-nano-2025-08-07",
-                                input=messages[1]['content']
+                                input=conversation_history,
+                                store=True,  # Enable stateful context for better continuity
                             )
 
                             ai_response = response.output_text
-                            
-                            
+
                             st.markdown(ai_response)
 
                             # Save to session and database
@@ -1076,62 +1766,143 @@ Do not provide definitive diagnoses - instead suggest possibilities and recommen
 
                         except Exception as e:
                             st.error(f"AI Assistant error: {e}")
+                            st.info("Please check your OpenAI API configuration and try again.")
+
+            # Show saved documents dialog if requested
+            if st.session_state.get('show_saved_documents', False):
+                st.markdown("---")
+                display_saved_documents_for_chat(patient_id)
 
         with tab2:
             st.subheader("📋 Document Analysis")
             st.write("Upload medical documents for AI analysis and insights.")
 
-            uploaded_file = st.file_uploader(
-                "Upload Medical Document",
+            # Multi-document upload section
+            st.markdown("### 📁 Upload Documents")
+            st.info("💡 **Tip**: You can upload multiple documents at once (e.g., lab results + radiologist report + clinical notes)")
+
+            uploaded_files = st.file_uploader(
+                "Upload Medical Documents",
                 type=["pdf", "txt", "jpg", "jpeg", "png"],
-                help="Upload lab results, imaging reports, or other medical documents"
+                accept_multiple_files=True,
+                help="Upload lab results, imaging reports, clinician notes, or other medical documents"
             )
 
-            if uploaded_file is not None:
-                # Process uploaded file
-                file_content = ""
-                if uploaded_file.type == "text/plain":
-                    file_content = uploaded_file.read().decode("utf-8")
-                elif uploaded_file.type == "application/pdf":
-                    # PDF processing would go here
-                    st.info("PDF processing feature coming soon!")
-                elif uploaded_file.type.startswith("image/"):
-                    st.info("Analysing image...!")
+            # Initialize session state for processed documents
+            if 'processed_documents' not in st.session_state:
+                st.session_state.processed_documents = []
+            if 'document_session_id' not in st.session_state:
+                st.session_state.document_session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-                if file_content:
-                    st.text_area("Document Content", value=file_content[:1000], height=200)
+            if uploaded_files:
+                # Process each uploaded file
+                processed_docs = []
+                for uploaded_file in uploaded_files:
+                    try:
+                        with st.spinner(f"📄 Processing {uploaded_file.name}..."):
+                            result = process_document(uploaded_file)
 
-                    if st.button("🔍 Analyze Document"):
-                        with st.spinner("AI is analyzing the document..."):
-                            try:
-                                analysis_prompt = f"""
-Analyze this medical document for patient {patient_info['name']}:
+                        if result[0] is not None:
+                            if len(result) == 4:  # Image file
+                                file_content, file_metadata, doc_type, img_base64 = result
+                            else:  # Text or PDF file
+                                file_content, file_metadata, doc_type = result
+                                img_base64 = None
 
-{file_content}
+                            # Add to processed documents
+                            processed_docs.append({
+                                'file': uploaded_file,
+                                'content': file_content,
+                                'metadata': file_metadata,
+                                'type': doc_type,
+                                'base64': img_base64,
+                                'session_id': st.session_state.document_session_id
+                            })
 
-Provide:
-1. Key findings and abnormal values
-2. Clinical significance
-3. Recommended follow-up actions
-4. Potential concerns that need attention
-                                """
+                    except Exception as e:
+                        st.error(f"❌ Error processing {uploaded_file.name}: {str(e)}")
 
-                                response = client.chat.completions.create(
-                                    model="gpt-4o-mini",
-                                    messages=[
-                                        {"role": "system", "content": "You are an expert clinical analyst."},
-                                        {"role": "user", "content": analysis_prompt}
-                                    ],
-                                    max_tokens=600,
-                                    temperature=0.2
-                                )
+                if processed_docs:
+                    st.session_state.processed_documents.extend(processed_docs)
+                    st.success(f"✅ Successfully processed {len(processed_docs)} document(s)!")
 
-                                analysis = response.choices[0].message.content
-                                st.markdown("### 📊 AI Analysis")
-                                st.markdown(analysis)
+            # Display processed documents
+            if st.session_state.processed_documents:
+                st.markdown("### 📋 Processed Documents")
 
-                            except Exception as e:
-                                st.error(f"Analysis failed: {e}")
+                # Document selection for analysis
+                doc_names = [f"{doc['metadata']['name']} ({doc['type'].upper()})"
+                           for doc in st.session_state.processed_documents]
+
+                col1, col2, col3 = st.columns([3, 1, 1])
+                with col1:
+                    st.subheader("Current Session Documents")
+                with col2:
+                    if st.button("🗑️ Clear All", type="secondary"):
+                        st.session_state.processed_documents = []
+                        st.rerun()
+                with col3:
+                    if st.button("📥 Load Saved", type="secondary"):
+                        st.session_state.show_saved_documents = True
+
+                # Display each document with options
+                for i, doc in enumerate(st.session_state.processed_documents):
+                    with st.expander(f"📄 {doc['metadata']['name']} ({doc['type'].upper()})", expanded=(i == len(st.session_state.processed_documents) - 1)):
+                        # Document metadata
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Type", doc['type'].upper())
+                            # Use file_size for images, size for other document types
+                            file_size = doc['metadata'].get('file_size', doc['metadata'].get('size', 0))
+                            if isinstance(file_size, (int, float)):
+                                st.metric("Size", f"{file_size / 1024:.1f} KB")
+                            else:
+                                st.metric("Size", "N/A")
+                        with col2:
+                            if doc['type'] == "pdf" and 'pages' in doc['metadata']:
+                                st.metric("Pages", doc['metadata']['pages'])
+                            if doc['type'] == "image":
+                                st.metric("Dimensions", f"{doc['metadata'].get('width', 'N/A')}x{doc['metadata'].get('height', 'N/A')}")
+                        with col3:
+                            st.checkbox("Include in Analysis", key=f"include_doc_{i}", value=True)
+
+                        # Preview content
+                        if doc['type'] in ["text", "pdf"] and doc['content'].strip():
+                            preview_length = 1000
+                            preview_content = doc['content'][:preview_length]
+                            st.text_area(f"Preview:", value=preview_content, height=150, disabled=True)
+                            if len(doc['content']) > preview_length:
+                                st.caption(f"Showing first {preview_length} of {len(doc['content'])} characters")
+                        elif doc['type'] == "image":
+                            st.image(doc['file'], caption=f"📷 {doc['metadata']['name']}", use_column_width=True)
+
+                # Analysis section
+                st.markdown("---")
+                analysis_col1, analysis_col2 = st.columns([2, 1])
+
+                with analysis_col1:
+                    st.subheader("🔍 AI Analysis Options")
+                    analysis_type = st.selectbox(
+                        "Select Analysis Type:",
+                        ["Comprehensive Analysis", "Quick Summary", "Diagnostic Focus", "Risk Assessment", "Treatment Recommendations"]
+                    )
+
+                with analysis_col2:
+                    st.subheader("⚡ Actions")
+                    if st.button("🚀 Analyze Selected Documents", type="primary", use_container_width=True):
+                        selected_docs = [doc for i, doc in enumerate(st.session_state.processed_documents)
+                                       if st.session_state.get(f"include_doc_{i}", True)]
+                        if selected_docs:
+                            perform_multi_document_analysis(patient_id, patient_info, selected_docs, analysis_type)
+                        else:
+                            st.warning("Please select at least one document to analyze.")
+
+                    if st.button("💾 Save All to Patient Record", use_container_width=True):
+                        save_multiple_documents_to_record(patient_id, st.session_state.processed_documents)
+
+            # Show saved documents section
+            if st.session_state.get('show_saved_documents', False):
+                display_saved_documents_for_chat(patient_id)
 
         with tab3:
             st.subheader("🔍 Differential Diagnosis Helper")
@@ -1172,17 +1943,26 @@ Provide:
 4. Red flag symptoms requiring immediate attention
                                 """
 
-                                response = client.chat.completions.create(
-                                    model="gpt-4o-mini",
-                                    messages=[
-                                        {"role": "system", "content": "You are an expert diagnostician."},
-                                        {"role": "user", "content": ddx_prompt}
-                                    ],
-                                    max_tokens=700,
+                                # Use OpenAI Responses API for differential diagnosis
+                                messages = [
+                                    {
+                                        "role": "system",
+                                        "content": "You are an expert clinical diagnostician providing differential diagnosis analysis. Always prioritize patient safety and consider urgent conditions first."
+                                    },
+                                    {
+                                        "role": "user",
+                                        "content": ddx_prompt
+                                    }
+                                ]
+
+                                response = client.responses.create(
+                                    model="gpt-5-nano-2025-08-07",
+                                    input=messages,
+                                    store=True,
                                     temperature=0.2
                                 )
 
-                                ddx = response.choices[0].message.content
+                                ddx = response.output_text
                                 st.markdown("### 🩺 Differential Diagnosis")
                                 st.markdown(ddx)
 

@@ -1,0 +1,42 @@
+---
+
+**Patient Name:** [Redacted for privacy]
+**Referring Clinician:** Dr. A. Smith
+**Date of Examination:** 26 October 2025
+**Study:** MRI Brain — Axial T2-weighted sequence
+
+---
+
+### **Clinical Indication**
+
+Patient referred for evaluation of recurrent headaches and occasional dizziness. No prior history of trauma, seizures, or neurological deficits reported.
+
+---
+
+### **Findings**
+
+* The cerebral hemispheres appear symmetrical.
+* The cortical and subcortical structures demonstrate normal signal intensity.
+* Ventricular system and basal cisterns are within normal limits; no evidence of hydrocephalus.
+* Brainstem and cerebellum show no focal abnormalities.
+* No evidence of intracranial mass, hemorrhage, or infarct.
+* Midline structures are intact; no shift or herniation observed.
+* Paranasal sinuses and mastoid air cells are clear.
+
+---
+
+### **Impression**
+
+Normal MRI brain scan.
+No structural or signal abnormalities detected to explain the patient’s symptoms.
+
+---
+
+### **Recommendations**
+
+* Clinical correlation recommended.
+* If symptoms persist, consider follow-up imaging or referral to neurology for further evaluation (e.g., migraine or vestibular assessment).
+
+---
+
+
